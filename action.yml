@@ -23,6 +23,22 @@ runs:
   using: composite
   steps:
 
+    - name: Validate inputs
+      shell: bash
+      env:
+        SHA: ${{ inputs.sha }}
+        TAG: ${{ inputs.tag }}
+        BODY: ${{ inputs.body }}
+      run: |
+        if ! [[ "$SHA" =~ [^0-9a-f]{40} ]]; then
+          echo "Invalid sha"
+          exit 1
+        fi
+        if [[ "$TAG" =~ [^a-z0-9\.\-] ]]; then
+          echo "Invalid tag"
+          exit 1
+        fi
+
     - name: Delete existing release if one exists
       if: ${{ inputs.release == 'true' && inputs.delete_existing == 'true' }}
       shell: bash
@@ -61,33 +77,24 @@ runs:
         -H "Accept: application/vnd.github.v3+json" \
         -H "Authorization: token ${{ github.token }}"
 
-    # - name: Delete existing tag if one exists
-    #   if: ${{ inputs.delete_existing == 'true' }}
-    #   shell: bash
-    #   # Add string inputs to memory instead of using string substitution in shell script
-    #   # https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
-    #   env:
-    #     TAG: ${{ inputs.tag }}
-    #   run: |
-    #     echo "Deleting old $TAG tag if it exists"
-    #     # Delete tag via GitHub API
-    #     # https://docs.github.com/en/rest/reference/git#delete-a-reference
-    #     curl -s \
-    #     -X DELETE https://api.github.com/repos/${{ github.repository }}/git/refs/tags/$TAG \
-    #     -H "Accept: application/vnd.github.v3+json" \
-    #     -H "Authorization: token ${{ github.token }}"
-
     - name: Create tag
       if: ${{ inputs.release == 'false' }}
-      uses: actions/github-script@v5
-      with:
-        script: |
-          github.rest.git.createRef({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            ref: 'refs/tags/${{ inputs.tag }}',
-            sha: '${{ inputs.sha }}'
-          })
+      shell: bash
+      env:
+        SHA: ${{ inputs.sha }}
+        TAG: ${{ inputs.tag }}
+      run: |
+        # Use raw git commands, otherwise we get "Resource not accessible by integration"
+        # and the tag is not created, even if parent job is run with permission: write-all
+        # This is despite the fact we can create a release via the API which generates a tag
+        RES=$(git checkout "$SHA")
+        if [[ $RES =~ error ]]; then
+          echo "SHA does not exist, did not create tag"
+          exit 1
+        fi
+        git tag "$TAG"
+        git push origin "$TAG"
+        echo "New tag $TAG created for sha $SHA"
 
     # - name: Create tag
     #   if: ${{ inputs.release == 'false' }}
