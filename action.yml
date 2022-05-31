@@ -61,6 +61,22 @@ runs:
         -H "Accept: application/vnd.github.v3+json" \
         -H "Authorization: token ${{ github.token }}"
 
+    # - name: Delete existing tag if one exists
+    #   if: ${{ inputs.delete_existing == 'true' }}
+    #   shell: bash
+    #   # Add string inputs to memory instead of using string substitution in shell script
+    #   # https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
+    #   env:
+    #     TAG: ${{ inputs.tag }}
+    #   run: |
+    #     echo "Deleting old $TAG tag if it exists"
+    #     # Delete tag via GitHub API
+    #     # https://docs.github.com/en/rest/reference/git#delete-a-reference
+    #     curl -s \
+    #     -X DELETE https://api.github.com/repos/${{ github.repository }}/git/refs/tags/$TAG \
+    #     -H "Accept: application/vnd.github.v3+json" \
+    #     -H "Authorization: token ${{ github.token }}"
+
     - name: Create tag
       if: ${{ inputs.release == 'false' }}
       uses: actions/github-script@v5
@@ -70,7 +86,7 @@ runs:
             owner: context.repo.owner,
             repo: context.repo.repo,
             ref: 'refs/tags/${{ inputs.tag }}',
-            sha: ${{ inputs.sha }}
+            sha: '${{ inputs.sha }}'
           })
 
     # - name: Create tag
