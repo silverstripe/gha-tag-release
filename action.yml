@@ -77,6 +77,10 @@ runs:
         -H "Accept: application/vnd.github.v3+json" \
         -H "Authorization: token ${{ github.token }}"
 
+    - name: Checkout code
+      if: ${{ inputs.release == 'false' }}
+      uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e # @v2
+
     - name: Create tag
       if: ${{ inputs.release == 'false' }}
       shell: bash
