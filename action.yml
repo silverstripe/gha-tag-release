@@ -30,7 +30,7 @@ runs:
         TAG: ${{ inputs.tag }}
         BODY: ${{ inputs.body }}
       run: |
-        if ! [[ "$SHA" =~ [^0-9a-f]{40} ]]; then
+        if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
           echo "Invalid sha"
           exit 1
         fi
