@@ -88,6 +88,8 @@ runs:
         SHA: ${{ inputs.sha }}
         TAG: ${{ inputs.tag }}
       run: |
+        # debug
+        git log
         # Use raw git commands, otherwise we get "Resource not accessible by integration"
         # and the tag is not created, even if parent job is run with permission: write-all
         # This is despite the fact we can create a release via the API which generates a tag
