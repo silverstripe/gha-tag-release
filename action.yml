@@ -80,6 +80,8 @@ runs:
     - name: Checkout code
       if: ${{ inputs.release == 'false' }}
       uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e # @v2
+      with:
+        fetch-depth: 50
 
     - name: Create tag
       if: ${{ inputs.release == 'false' }}
@@ -93,11 +95,7 @@ runs:
         # Use raw git commands, otherwise we get "Resource not accessible by integration"
         # and the tag is not created, even if parent job is run with permission: write-all
         # This is despite the fact we can create a release via the API which generates a tag
-        RES=$(git checkout "$SHA")
-        if [[ $RES =~ error ]]; then
-          echo "SHA does not exist, did not create tag"
-          exit 1
-        fi
+        git checkout "$SHA"
         git tag "$TAG"
         git push origin "$TAG"
         echo "New tag $TAG created for sha $SHA"
