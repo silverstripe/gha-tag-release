@@ -69,7 +69,7 @@ runs:
         TAG: ${{ inputs.tag }}
       run: |
         # TODO: remove
-        SHA=${{ github.sha }}
+        # SHA=${{ github.sha }}
         echo "SHA is $SHA"
         echo "TAG is $TAG"
         echo "url is https://api.github.com/repos/${{ github.repository }}/git/refs"
