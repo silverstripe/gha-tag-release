@@ -64,6 +64,7 @@ runs:
           echo "Could not find an existing release for tag $TAG"
         fi
 
+    # This fails "Resource not accessible by integration" - even with token passed in
     # Note the use of ${{ inputs.github_token }} instead of ${{ github.token }}
     - name: Delete existing tag if one exists
       if: ${{ inputs.delete_existing == 'true' }}
