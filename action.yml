@@ -19,6 +19,9 @@ inputs:
     type: string
     required: false
     default: ''
+  github_token:
+    description: "GitHub secret token"
+    required: true
 runs:
   using: composite
   steps:
@@ -61,6 +64,7 @@ runs:
           echo "Could not find an existing release for tag $TAG"
         fi
 
+    # Note the use of ${{ inputs.github_token }} instead of ${{ github.token }}
     - name: Delete existing tag if one exists
       if: ${{ inputs.delete_existing == 'true' }}
       shell: bash
@@ -75,31 +79,16 @@ runs:
         curl -s \
         -X DELETE https://api.github.com/repos/${{ github.repository }}/git/refs/tags/$TAG \
         -H "Accept: application/vnd.github.v3+json" \
-        -H "Authorization: token ${{ github.token }}"
+        -H "Authorization: token ${{ inputs.github_token }}"
 
-    - name: Checkout code
-      if: ${{ inputs.release == 'false' }}
-      uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e # @v2
-      with:
-        fetch-depth: 50
+    # - name: Checkout code
+    #   if: ${{ inputs.release == 'false' }}
+    #   uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e # @v2
+    #   with:
+    #     fetch-depth: 50
 
-    - name: Create tag
-      if: ${{ inputs.release == 'false' }}
-      shell: bash
-      env:
-        SHA: ${{ inputs.sha }}
-        TAG: ${{ inputs.tag }}
-      run: |
-        # debug
-        git log
-        # Use raw git commands, otherwise we get "Resource not accessible by integration"
-        # and the tag is not created, even if parent job is run with permission: write-all
-        # This is despite the fact we can create a release via the API which generates a tag
-        git checkout "$SHA"
-        git tag "$TAG"
-        git push origin "$TAG"
-        echo "New tag $TAG created for sha $SHA"
-
+    # This fails
+    # ! [remote rejected] mytag -> mytag (refusing to allow a GitHub App to create or update workflow `.github/workflows/test.yml` without `workflows` permission)
     # - name: Create tag
     #   if: ${{ inputs.release == 'false' }}
     #   shell: bash
@@ -107,24 +96,42 @@ runs:
     #     SHA: ${{ inputs.sha }}
     #     TAG: ${{ inputs.tag }}
     #   run: |
-    #     # TODO: remove
-    #     # SHA=${{ github.sha }}
-    #     echo "SHA is $SHA"
-    #     echo "TAG is $TAG"
-    #     echo "url is https://api.github.com/repos/${{ github.repository }}/git/refs"
-    #     # Create new tag via GitHub API
-    #     # https://docs.github.com/en/rest/reference/git#create-a-reference
-    #     curl -s \
-    #     -X POST https://api.github.com/repos/${{ github.repository }}/git/refs \
-    #     -H "Accept: application/vnd.github.v3+json" \
-    #     -H "Authorization: token ${{ github.token }}" \
-    #     -d @- << EOF
-    #     {
-    #       "sha": "$SHA",
-    #       "ref": "refs/tags/$TAG"
-    #     }
-    #     EOF
+    #     # debug
+    #     git log
+    #     # Use raw git commands, otherwise we get "Resource not accessible by integration"
+    #     # and the tag is not created, even if parent job is run with permission: write-all
+    #     # This is despite the fact we can create a release via the API which generates a tag
+    #     git checkout "$SHA"
+    #     git tag "$TAG"
+    #     git push origin "$TAG"
     #     echo "New tag $TAG created for sha $SHA"
+
+    # Note the use of ${{ inputs.github_token }} instead of ${{ github.token }}
+    - name: Create tag
+      if: ${{ inputs.release == 'false' }}
+      shell: bash
+      env:
+        SHA: ${{ inputs.sha }}
+        TAG: ${{ inputs.tag }}
+      run: |
+        # TODO: remove
+        # SHA=${{ github.sha }}
+        echo "SHA is $SHA"
+        echo "TAG is $TAG"
+        echo "url is https://api.github.com/repos/${{ github.repository }}/git/refs"
+        # Create new tag via GitHub API
+        # https://docs.github.com/en/rest/reference/git#create-a-reference
+        curl -s \
+        -X POST https://api.github.com/repos/${{ github.repository }}/git/refs \
+        -H "Accept: application/vnd.github.v3+json" \
+        -H "Authorization: token ${{ inputs.github_token }}" \
+        -d @- << EOF
+        {
+          "sha": "$SHA",
+          "ref": "refs/tags/$TAG"
+        }
+        EOF
+        echo "New tag $TAG created for sha $SHA"
 
     # Creating a release will also create a tag
     - name: Create release
