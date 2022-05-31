@@ -63,29 +63,41 @@ runs:
 
     - name: Create tag
       if: ${{ inputs.release == 'false' }}
-      shell: bash
-      env:
-        SHA: ${{ inputs.sha }}
-        TAG: ${{ inputs.tag }}
-      run: |
-        # TODO: remove
-        # SHA=${{ github.sha }}
-        echo "SHA is $SHA"
-        echo "TAG is $TAG"
-        echo "url is https://api.github.com/repos/${{ github.repository }}/git/refs"
-        # Create new tag via GitHub API
-        # https://docs.github.com/en/rest/reference/git#create-a-reference
-        curl -s \
-        -X POST https://api.github.com/repos/${{ github.repository }}/git/refs \
-        -H "Accept: application/vnd.github.v3+json" \
-        -H "Authorization: token ${{ github.token }}" \
-        -d @- << EOF
-        {
-          "sha": "$SHA",
-          "ref": "refs/tags/$TAG"
-        }
-        EOF
-        echo "New tag $TAG created for sha $SHA"
+      uses: actions/github-script@v5
+      with:
+        script: |
+          github.rest.git.createRef({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            ref: 'refs/tags/${{ inputs.tag }}',
+            sha: ${{ inputs.sha }}
+          })
+
+    # - name: Create tag
+    #   if: ${{ inputs.release == 'false' }}
+    #   shell: bash
+    #   env:
+    #     SHA: ${{ inputs.sha }}
+    #     TAG: ${{ inputs.tag }}
+    #   run: |
+    #     # TODO: remove
+    #     # SHA=${{ github.sha }}
+    #     echo "SHA is $SHA"
+    #     echo "TAG is $TAG"
+    #     echo "url is https://api.github.com/repos/${{ github.repository }}/git/refs"
+    #     # Create new tag via GitHub API
+    #     # https://docs.github.com/en/rest/reference/git#create-a-reference
+    #     curl -s \
+    #     -X POST https://api.github.com/repos/${{ github.repository }}/git/refs \
+    #     -H "Accept: application/vnd.github.v3+json" \
+    #     -H "Authorization: token ${{ github.token }}" \
+    #     -d @- << EOF
+    #     {
+    #       "sha": "$SHA",
+    #       "ref": "refs/tags/$TAG"
+    #     }
+    #     EOF
+    #     echo "New tag $TAG created for sha $SHA"
 
     # Creating a release will also create a tag
     - name: Create release
