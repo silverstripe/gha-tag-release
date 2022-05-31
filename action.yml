@@ -1,0 +1,111 @@
+name: Tag and release
+description: GitHub Action to create a tag and an optional release
+inputs:
+  sha:
+    type: string
+    required: true
+  tag:
+    type: string
+    required: true
+  delete_existing:
+    type: boolean
+    required: false
+    default: false
+  release:
+    type: boolean
+    required: false
+    default: false
+  body:
+    type: string
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Delete existing tag if one exists
+      if: ${{ inputs.delete_existing }}
+      shell: bash
+      # Add string inputs to memory instead of using string substitution in shell script
+      # https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
+      env:
+        TAG: ${{ inputs.tag }}
+      run: |
+        echo "Deleting old $TAG tag if it exists"
+        # Delete tag via GitHub API
+        # https://docs.github.com/en/rest/reference/git#delete-a-reference
+        curl -s \
+        -X DELETE https://api.github.com/repos/${{ github.repository }}/git/refs/tags/$TAG \
+        -H "Accept: application/vnd.github.v3+json" \
+        -H "Authorization: token ${{ github.token }}"
+
+    - name: Create tag
+      shell: bash
+      env:
+        SHA: ${{ inputs.branch }}
+        TAG: ${{ inputs.tag }}
+      run: |
+        SHA=${{ github.sha }}
+        # Create new tag via GitHub API
+        # https://docs.github.com/en/rest/reference/git#create-a-reference
+        curl -s \
+        -X POST https://api.github.com/repos/${{ github.repository }}/git/refs \
+        -H "Accept: application/vnd.github.v3+json" \
+        -H "Authorization: token ${{ github.token }}" \
+        -d @- << EOF
+        {
+          "sha": "$SHA",
+          "ref": "refs/tags/$TAG"
+        }
+        EOF
+        echo "New tag $TAG created with sha $SHA"
+
+# Note: untestested below this line:
+
+#     - name: Delete existing release if one exists
+#       if: ${{ inputs.release && inputs.delete_existing }}
+#       shell: bash
+#       env:
+#         SHA: ${{ inputs.branch }}
+#         TAG: ${{ inputs.tag }}
+#         BODY: ${{ inputs.body }}
+#       run: |
+#         echo "Deleting old release for $TAG if it exists"
+#         # Get id for an existing release matching $TAG
+#         curl -s \
+#         -X GET https://api.github.com/repos/silverstripe/silverstripe-framework/releases/tags/$TAG \
+#         -H "Accept: application/vnd.github.v3+json" > __.json
+#         RELEASE_ID=$(jq .id __.json)
+#         if [ "$RELEASE_ID" != "null" ]; then
+#           curl -s \
+#           -X DELETE https://api.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID \
+#           -H "Accept: application/vnd.github.v3+json" \
+#           -H "Authorization: token ${{ github.token }}"
+#           echo "Deleted existing release $RELEASE_ID for tag $TAG"
+#         else
+#           echo "Could not find an existing release for tag $TAG"
+#         fi
+
+#     - name: Create release
+#       if: ${{ inputs.release }}
+#       shell: bash
+#       env:
+#         SHA: ${{ inputs.branch }}
+#         TAG: ${{ inputs.tag }}
+#         BODY: ${{ inputs.body }}
+#       run: |
+#         # Run git commit, push and create pull-request as 'github-actions' user
+        
+#         # Create new pull-request via GitHub API
+#         # https://docs.github.com/en/rest/reference/releases#create-a-release
+#         curl -s \
+#         -X POST https://api.github.com/repos/${{ github.repository }}/releases \
+#         -H "Accept: application/vnd.github.v3+json" \
+#         -H "Authorization: token ${{ github.token }}" \
+#         -d @- << EOF
+#         {
+#           "tag_name": "$TAG",
+#           "name": "$TAG",
+#           "body": "$BODY",
+#         }
+#         EOF
+#         echo "New pull-request created"
