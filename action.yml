@@ -1,0 +1,169 @@
+name: Tag and release
+description: GitHub Action to create a tag and an optional release
+
+inputs:
+  # Note: there is an explicit reason why there is no sha input parameter - see the readme
+  tag:
+    type: string
+    required: true
+  delete_existing:
+    type: boolean
+    required: false
+    default: false
+  release:
+    type: boolean
+    required: false
+    default: false
+  release_description:
+    type: string
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+
+    - name: Validate inputs
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+      run: |
+        git check-ref-format "tags/$TAG" > /dev/null
+        if [[ $? != "0" ]]; then
+          echo "Invalid tag"
+          exit 1
+        fi
+
+    - name: Delete existing release if one exists
+      if: ${{ inputs.release == 'true' && inputs.delete_existing == 'true' }}
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: |
+        # Get id for an existing release matching $TAG
+        # https://docs.github.com/en/rest/releases/releases#get-a-release-by-tag-name
+        RESP_CODE=$(curl -w %{http_code} -s -o __response.json \
+        -X GET https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$TAG \
+        -H "Accept: application/vnd.github.v3+json")
+        if [[ $RESP_CODE != "200" ]];
+          echo "Unable to check tag status for $TAG - HTTP response code was $RESP_CODE"
+          exit 1
+        fi
+        RELEASE_ID=$https://docs.github.com/en/rest/git/refs#get-a-reference(jq .id __response.json)
+        if [[ $RELEASE_ID == "null" ]]; then
+          echo "Did not find an existing release for tag $TAG"
+        else
+          # https://docs.github.com/en/rest/releases/releases#delete-a-release
+          RESP_CODE=$(curl -w %{http_code} -s -o /dev/null \
+          -X DELETE https://api.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID \
+          -H "Accept: application/vnd.github.v3+json" \
+          -H "Authorization: token ${{ github.token }}"
+          if [[ $RESP_CODE != "204" ]];
+            echo "Unable to delete release $RELEASE_ID for tag $TAG - HTTP response code was $RESP_CODE"
+            exit 1
+          fi
+          echo "Deleted existing release $RELEASE_ID for tag $TAG"
+        fi
+
+    - name: Delete existing tag if one exists
+      if: ${{ inputs.delete_existing == 'true' }}
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: |
+        # Check if tag currently exists
+        # Note: not using https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/tags/<tag>
+        # because that uses a "starts-with" filter, so it will also match -beta1 and -rc1 tags
+        # https://docs.github.com/en/rest/git/refs#get-a-reference
+        RESP_CODE=$(curl -w %{http_code} -s -o __response.json \
+        -X GET https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/tags \
+        -H "Accept: application/vnd.github.v3+json")
+        if [[ $RESP_CODE != "200" ]];
+          echo "Unable to check tag status - HTTP response code was $RESP_CODE"
+          exit 1
+        fi
+        FOUND="true"
+        # Check there are any tags so we can use jq array selector later
+        if [[ $(jq 'map(type)' __response.json) =~ object ]]; then
+          if [[ $(jq '.[] | select(.ref == "refs/tags/$TAG")' __response.json) == "" ]]; then
+            FOUND="false"
+          fi
+        fi
+        if [[ $FOUND == "false" ]]; then
+          echo "Did not find an existing tag for $TAG"
+        else
+          # Delete tag via GitHub API
+          # https://docs.github.com/en/rest/reference/git#delete-a-reference
+          RESP_CODE=$(curl -w %{http_code} -s -o /dev/null \
+          curl -s \
+          -X DELETE https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG \
+          -H "Accept: application/vnd.github.v3+json" \
+          -H "Authorization: token ${{ github.token }}")
+          if [[ $RESP_CODE != "204" ]];
+            echo "Unable to delete existing TAG $TAG - HTTP response code was $RESP_CODE"
+            exit 1
+          fi
+          echo "Deleted existing tag $TAG"
+        fi
+
+    - name: Create tag
+      # Creating a release will also create a tag, so only create explicitly create tag if not creating release
+      if: ${{ inputs.release == 'false' }}
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: |
+        # Create new tag via GitHub API
+        # https://docs.github.com/en/rest/reference/git#create-a-reference
+        RESP_CODE=$(curl -w %{http_code} -s -o /dev/null \
+        -X POST https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs \
+        -H "Accept: application/vnd.github.v3+json" \
+        -H "Authorization: token ${{ github.token }}" \
+        -d @- << EOF
+        {
+          "sha": "${{ github.sha }}",
+          "ref": "refs/tags/$TAG"
+        }
+        EOF
+        )
+        if [[ $RESP_CODE != "201" ]];
+          echo "Unable to create tag $TAG for sha ${{ github.sha }} - HTTP response code was $RESP_CODE"
+          exit 1
+        fi
+        echo "New tag $TAG created for sha ${{ github.sha }}"
+
+    - name: Create release
+      if: ${{ inputs.release == 'true' }}
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+        RELEASE_DESCRIPTION: ${{ inputs.release_description }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: |
+        # Create new release via GitHub API
+        # https://docs.github.com/en/rest/releases/releases#create-a-release
+        # Escape double quotes '"' => '\"'
+        RELEASE_DESCRIPTION=${RELEASE_DESCRIPTION//\"/\\\"}
+        RESP_CODE=$(curl -w %{http_code} -s -o /dev/null \
+        -X POST https://api.github.com/repos/$GITHUB_REPOSITORY/releases \
+        -H "Accept: application/vnd.github.v3+json" \
+        -H "Authorization: token ${{ github.token }}" \
+        -d @- << EOF
+        {
+          "tag_name": "$TAG",
+          "target_commitish": "${{ github.sha }}",
+          "name": "$TAG",
+          "body": "$RELEASE_DESCRIPTION",
+          "draft": false,
+          "prerelease": false
+        }
+        EOF
+        )
+        if [[ $RESP_CODE != "201" ]];
+          echo "Unable to create release for tag $TAG - HTTP response code was $RESP_CODE"
+          exit 1
+        fi
+        echo "New release $TAG created"
