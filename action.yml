@@ -46,7 +46,7 @@ runs:
         RESP_CODE=$(curl -w %{http_code} -s -o __response.json \
         -X GET https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$TAG \
         -H "Accept: application/vnd.github.v3+json")
-        if [[ $RESP_CODE != "200" ]];
+        if [[ $RESP_CODE != "200" ]]; then
           echo "Unable to check tag status for $TAG - HTTP response code was $RESP_CODE"
           exit 1
         fi
@@ -59,7 +59,7 @@ runs:
           -X DELETE https://api.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID \
           -H "Accept: application/vnd.github.v3+json" \
           -H "Authorization: token ${{ github.token }}"
-          if [[ $RESP_CODE != "204" ]];
+          if [[ $RESP_CODE != "204" ]]; then
             echo "Unable to delete release $RELEASE_ID for tag $TAG - HTTP response code was $RESP_CODE"
             exit 1
           fi
@@ -80,7 +80,7 @@ runs:
         RESP_CODE=$(curl -w %{http_code} -s -o __response.json \
         -X GET https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/tags \
         -H "Accept: application/vnd.github.v3+json")
-        if [[ $RESP_CODE != "200" ]];
+        if [[ $RESP_CODE != "200" ]]; then
           echo "Unable to check tag status - HTTP response code was $RESP_CODE"
           exit 1
         fi
@@ -101,7 +101,7 @@ runs:
           -X DELETE https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG \
           -H "Accept: application/vnd.github.v3+json" \
           -H "Authorization: token ${{ github.token }}")
-          if [[ $RESP_CODE != "204" ]];
+          if [[ $RESP_CODE != "204" ]]; then
             echo "Unable to delete existing TAG $TAG - HTTP response code was $RESP_CODE"
             exit 1
           fi
@@ -129,7 +129,7 @@ runs:
         }
         EOF
         )
-        if [[ $RESP_CODE != "201" ]];
+        if [[ $RESP_CODE != "201" ]]; then
           echo "Unable to create tag $TAG for sha ${{ github.sha }} - HTTP response code was $RESP_CODE"
           exit 1
         fi
@@ -162,7 +162,7 @@ runs:
         }
         EOF
         )
-        if [[ $RESP_CODE != "201" ]];
+        if [[ $RESP_CODE != "201" ]]; then
           echo "Unable to create release for tag $TAG - HTTP response code was $RESP_CODE"
           exit 1
         fi
