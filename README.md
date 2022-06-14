@@ -8,7 +8,7 @@ Create a tag and an optional release
 ```yml
 steps:
   - name: Create tag and release
-    uses: silverstripe/gha-pull-request@main
+    uses: silverstripe/gha-pull-request@v1
     with:
       tag: 1.2.3
       release: true
