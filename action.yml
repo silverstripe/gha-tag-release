@@ -14,6 +14,10 @@ inputs:
     type: boolean
     required: false
     default: false
+  is_prerelease:
+    type: boolean
+    required: false
+    default: false
   release_description:
     type: string
     required: false
@@ -158,7 +162,7 @@ runs:
           "name": "$TAG",
           "body": "$RELEASE_DESCRIPTION",
           "draft": false,
-          "prerelease": false
+          "prerelease": ${{ inputs.is_prerelease }}
         }
         EOF
         )
