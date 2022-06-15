@@ -8,13 +8,14 @@ Create a tag and an optional release
 ```yml
 steps:
   - name: Create tag and release
-    uses: silverstripe/gha-pull-request@v1
+    uses: silverstripe/gha-tag-release@v1
     with:
       tag: 1.2.3
       release: true
+      delete_existing: true
+      release_description: "Some description about the 1.2.3 release"
+      is_prerelease: false
 ```
-
-Read more information about the inputs available for [silverstripe/gha-pull-request](https://github.com/silverstripe/gha-pull-request).
 
 ## Why there is no SHA input paramater
 
