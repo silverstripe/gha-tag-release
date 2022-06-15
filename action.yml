@@ -87,7 +87,8 @@ runs:
         FOUND="true"
         # Check there are any tags so we can use jq array selector later
         if [[ $(jq 'map(type)' __response.json) =~ object ]]; then
-          if [[ $(jq '.[] | select(.ref == "refs/tags/$TAG")' __response.json) == "" ]]; then
+          EXISTING_TAG=$(jq ".[] | select(.ref == \"refs/tags/$TAG\")" __response.json)
+          if [[ $EXISTING_TAG == "" ]]; then
             FOUND="false"
           fi
         fi
