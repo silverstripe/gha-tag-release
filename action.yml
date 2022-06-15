@@ -50,7 +50,7 @@ runs:
           echo "Unable to check tag status for $TAG - HTTP response code was $RESP_CODE"
           exit 1
         fi
-        RELEASE_ID=$https://docs.github.com/en/rest/git/refs#get-a-reference(jq .id __response.json)
+        RELEASE_ID=$(jq .id __response.json)
         if [[ $RELEASE_ID == "null" ]]; then
           echo "Did not find an existing release for tag $TAG"
         else
