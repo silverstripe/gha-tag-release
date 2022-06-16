@@ -47,11 +47,14 @@ runs:
         -X GET https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$TAG \
         -H "Accept: application/vnd.github.v3+json")
         if [[ $RESP_CODE != "200" ]]; then
-          echo "Unable to check tag status for $TAG - HTTP response code was $RESP_CODE"
-          exit 1
+          RESP_MSG=$(jq -r .message __response.json)
+          if [[ $RESP_MSG != "Not Found" ]]; then
+            echo "Unable to check tag status for $TAG - HTTP response code was $RESP_CODE and message was $RESP_MSG"
+            exit 1
+          fi
         fi
         RELEASE_ID=$(jq .id __response.json)
-        if [[ $RELEASE_ID == "null" ]]; then
+        if [[ $RESP_CODE == "404" || $RELEASE_ID == "null" ]]; then
           echo "Did not find an existing release for tag $TAG"
         else
           # https://docs.github.com/en/rest/releases/releases#delete-a-release
