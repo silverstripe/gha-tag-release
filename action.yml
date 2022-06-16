@@ -58,7 +58,7 @@ runs:
           RESP_CODE=$(curl -w %{http_code} -s -o /dev/null \
           -X DELETE https://api.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID \
           -H "Accept: application/vnd.github.v3+json" \
-          -H "Authorization: token ${{ github.token }}"
+          -H "Authorization: token ${{ github.token }}")
           if [[ $RESP_CODE != "204" ]]; then
             echo "Unable to delete release $RELEASE_ID for tag $TAG - HTTP response code was $RESP_CODE"
             exit 1
@@ -87,7 +87,8 @@ runs:
         FOUND="true"
         # Check there are any tags so we can use jq array selector later
         if [[ $(jq 'map(type)' __response.json) =~ object ]]; then
-          if [[ $(jq '.[] | select(.ref == "refs/tags/$TAG")' __response.json) == "" ]]; then
+          EXISTING_TAG=$(jq ".[] | select(.ref == \"refs/tags/$TAG\")" __response.json)
+          if [[ $EXISTING_TAG == "" ]]; then
             FOUND="false"
           fi
         fi
@@ -97,7 +98,6 @@ runs:
           # Delete tag via GitHub API
           # https://docs.github.com/en/rest/reference/git#delete-a-reference
           RESP_CODE=$(curl -w %{http_code} -s -o /dev/null \
-          curl -s \
           -X DELETE https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG \
           -H "Accept: application/vnd.github.v3+json" \
           -H "Authorization: token ${{ github.token }}")
