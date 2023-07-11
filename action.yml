@@ -152,6 +152,38 @@ runs:
         GITHUB_REPOSITORY: ${{ github.repository }}
         GITHUB_SHA: ${{ github.sha }}
       run: |
+        # Work out if release should be marked as the latest
+        # Only do the for stable semver tags
+        # Note = not using "legacy" as GitHub seems to only consider if it's the latest tag in a particular major line
+        # whereas we only want to mark it the latest if it's the latest tag overall
+        MAKE_LATEST="false"
+        if [[ $TAG =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+          # Gets latest 100 tags across all majors from via GitHub API
+          # https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28#list-repository-tags
+          RESP_CODE=$(curl -w %{http_code} -s -o __response.json \
+          -X GET "https://api.github.com/repos/${GITHUB_REPOSITORY}/tags?per_page=100" \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${{ github.token }}" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          )
+          if [[ $RESP_CODE != "200" ]]; then
+            echo "Unable to read list of tags - HTTP response code was $RESP_CODE"
+            exit 1
+          fi
+          # Get the latest stable tag
+          LATEST_TAG=$(jq -r '.[].name' __response.json | grep -Po '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V -r | head -n 1)
+          echo "LATEST_TAG is $LATEST_TAG"
+          if [[ $LATEST_TAG =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            MAJOR=${BASH_REMATCH[1]}
+            MINOR=${BASH_REMATCH[2]}
+            PATCH=${BASH_REMATCH[3]}
+            NEXT_TAG="$MAJOR.$MINOR.$((PATCH+1))"
+            if [[ $TAG == $NEXT_TAG ]]; then
+              MAKE_LATEST="true"
+            fi
+          fi
+        fi
+        echo "MAKE_LATEST is $MAKE_LATEST"
         # Escape double quotes '"' => '\"'
         RELEASE_DESCRIPTION=${RELEASE_DESCRIPTION//\"/\\\"}
         # Create new release via GitHub API
@@ -169,7 +201,7 @@ runs:
           "draft": false,
           "prerelease": false,
           "generate_release_notes": ${{ inputs.release_auto_notes }},
-          "make_latest": "legacy"
+          "make_latest": "$MAKE_LATEST"
         }
         EOF
         )
