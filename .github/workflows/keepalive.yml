@@ -1,0 +1,17 @@
+name: Keepalive
+
+on:
+  # At 3:15 PM UTC, on day 24 of the month
+  schedule:
+    - cron: '15 15 24 * *'
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    name: Keepalive
+    # Only run cron on the creative-commoners account
+    if: (github.event_name == 'schedule' && github.repository_owner == 'creative-commoners') || (github.event_name != 'schedule')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keepalive
+        uses: silverstripe/gha-keepalive@v1
