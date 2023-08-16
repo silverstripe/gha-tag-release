@@ -9,8 +9,8 @@ on:
 jobs:
   keepalive:
     name: Keepalive
-    # Only run cron on the creative-commoners account
-    if: (github.event_name == 'schedule' && github.repository_owner == 'creative-commoners') || (github.event_name != 'schedule')
+    # Only run cron on the silverstripe account
+    if: (github.event_name == 'schedule' && github.repository_owner == 'silverstripe') || (github.event_name != 'schedule')
     runs-on: ubuntu-latest
     steps:
       - name: Keepalive
