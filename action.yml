@@ -54,6 +54,7 @@ runs:
           RESP_MSG=$(jq -r .message __response.json)
           if [[ $RESP_MSG != "Not Found" ]]; then
             echo "Unable to check tag status for $TAG - HTTP response code was $RESP_CODE and message was $RESP_MSG"
+            cat __response.json
             exit 1
           fi
         fi
@@ -62,12 +63,13 @@ runs:
           echo "Did not find an existing release for tag $TAG"
         else
           # https://docs.github.com/en/rest/releases/releases#delete-a-release
-          RESP_CODE=$(curl -w %{http_code} -s -o /dev/null \
+          RESP_CODE=$(curl -w %{http_code} -s -o __response.json \
           -X DELETE https://api.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID \
           -H "Accept: application/vnd.github.v3+json" \
           -H "Authorization: token ${{ github.token }}")
           if [[ $RESP_CODE != "204" ]]; then
             echo "Unable to delete release $RELEASE_ID for tag $TAG - HTTP response code was $RESP_CODE"
+            cat __response.json
             exit 1
           fi
           echo "Deleted existing release $RELEASE_ID for tag $TAG"
@@ -89,6 +91,7 @@ runs:
         -H "Accept: application/vnd.github.v3+json")
         if [[ $RESP_CODE != "200" ]]; then
           echo "Unable to check tag status - HTTP response code was $RESP_CODE"
+          cat __response.json
           exit 1
         fi
         FOUND="true"
@@ -104,12 +107,13 @@ runs:
         else
           # Delete tag via GitHub API
           # https://docs.github.com/en/rest/reference/git#delete-a-reference
-          RESP_CODE=$(curl -w %{http_code} -s -o /dev/null \
+          RESP_CODE=$(curl -w %{http_code} -s -o __response.json \
           -X DELETE https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG \
           -H "Accept: application/vnd.github.v3+json" \
           -H "Authorization: token ${{ github.token }}")
           if [[ $RESP_CODE != "204" ]]; then
             echo "Unable to delete existing TAG $TAG - HTTP response code was $RESP_CODE"
+            cat __response.json
             exit 1
           fi
           echo "Deleted existing tag $TAG"
@@ -126,7 +130,7 @@ runs:
       run: |
         # Create new tag via GitHub API
         # https://docs.github.com/en/rest/reference/git#create-a-reference
-        RESP_CODE=$(curl -w %{http_code} -s -o /dev/null \
+        RESP_CODE=$(curl -w %{http_code} -s -o __response.json \
         -X POST https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs \
         -H "Accept: application/vnd.github.v3+json" \
         -H "Authorization: token ${{ github.token }}" \
@@ -139,6 +143,7 @@ runs:
         )
         if [[ $RESP_CODE != "201" ]]; then
           echo "Unable to create tag $TAG for sha ${{ github.sha }} - HTTP response code was $RESP_CODE"
+          cat __response.json
           exit 1
         fi
         echo "New tag $TAG created for sha ${{ github.sha }}"
@@ -152,11 +157,44 @@ runs:
         GITHUB_REPOSITORY: ${{ github.repository }}
         GITHUB_SHA: ${{ github.sha }}
       run: |
+        # Work out if release should be marked as the latest
+        # Only do the for stable semver tags
+        # Note = not using "legacy" as GitHub seems to only consider if it's the latest tag in a particular major line
+        # whereas we only want to mark it the latest if it's the latest tag overall
+        MAKE_LATEST="false"
+        if [[ $TAG =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+          # Gets latest 100 tags across all majors from via GitHub API
+          # https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28#list-repository-tags
+          RESP_CODE=$(curl -w %{http_code} -s -o __response.json \
+          -X GET "https://api.github.com/repos/${GITHUB_REPOSITORY}/tags?per_page=100" \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${{ github.token }}" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          )
+          if [[ $RESP_CODE != "200" ]]; then
+            echo "Unable to read list of tags - HTTP response code was $RESP_CODE"
+            cat __response.json
+            exit 1
+          fi
+          # Get the latest stable tag
+          LATEST_TAG=$(jq -r '.[].name' __response.json | grep -Po '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V -r | head -n 1)
+          echo "LATEST_TAG is $LATEST_TAG"
+          if [[ $LATEST_TAG =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            MAJOR=${BASH_REMATCH[1]}
+            MINOR=${BASH_REMATCH[2]}
+            PATCH=${BASH_REMATCH[3]}
+            NEXT_TAG="$MAJOR.$MINOR.$((PATCH+1))"
+            if [[ $TAG == $NEXT_TAG ]]; then
+              MAKE_LATEST="true"
+            fi
+          fi
+        fi
+        echo "MAKE_LATEST is $MAKE_LATEST"
         # Escape double quotes '"' => '\"'
         RELEASE_DESCRIPTION=${RELEASE_DESCRIPTION//\"/\\\"}
         # Create new release via GitHub API
         # https://docs.github.com/en/rest/releases/releases#create-a-release
-        RESP_CODE=$(curl -w %{http_code} -s -o /dev/null \
+        RESP_CODE=$(curl -w %{http_code} -s -o __response.json \
         -X POST https://api.github.com/repos/$GITHUB_REPOSITORY/releases \
         -H "Accept: application/vnd.github.v3+json" \
         -H "Authorization: token ${{ github.token }}" \
@@ -169,12 +207,21 @@ runs:
           "draft": false,
           "prerelease": false,
           "generate_release_notes": ${{ inputs.release_auto_notes }},
-          "make_latest": "legacy"
+          "make_latest": "$MAKE_LATEST"
         }
         EOF
         )
         if [[ $RESP_CODE != "201" ]]; then
           echo "Unable to create release for tag $TAG - HTTP response code was $RESP_CODE"
+          cat __response.json
           exit 1
         fi
         echo "New release $TAG created"
+
+    - name: Delete temporary files
+      shell: bash
+      if: always()
+      run: |
+        if [[ -f __response.json ]]; then
+          rm __response.json
+        fi
