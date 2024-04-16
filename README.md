@@ -6,12 +6,19 @@ Create a tag and an optional release
 
 **workflow.yml**
 ```yml
-steps:
-  - name: Create tag and release
-    uses: silverstripe/gha-tag-release@v1
-    with:
-      tag: 1.2.3
-      release: true
+permissions: {}
+
+jobs:
+  tagrelease:
+    # ...
+    permissions:
+      contents: write
+    steps:
+      - name: Create tag and release
+        uses: silverstripe/gha-tag-release@v1
+        with:
+          tag: 1.2.3
+          release: true
 ```
 
 ### Inputs
