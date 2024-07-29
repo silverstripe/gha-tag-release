@@ -1,49 +1,282 @@
 name: Tag and release
-description: GitHub Action to create a tag and an optional release
+description: GitHub Action to check if a patch release can be tagged, and then create a tag and an optional release
 
 inputs:
+  latest_local_sha:
+    description: The latest local sha. Used to gauge the release
+    required: false
+    type: string
+  skip_gauge_release:
+    description: If true, skip straight to tagging the release
+    required: false
+    default: false
+    type: boolean
+  # Note: the following inputs should usually be left as default if using gauge release
   # Note: there is an explicit reason why there is no sha input parameter - see the readme
   tag:
-    type: string
-    required: true
-  delete_existing:
-    type: boolean
-    required: false
-    default: false
-  release:
-    type: boolean
-    required: false
-    default: false
-  release_description:
-    type: string
+    description: The name of the tag. Required if skipping gauge release. Cannot use if not skipping gauge release
     required: false
     default: ''
-  release_auto_notes:
-    type: boolean
+    type: string
+  delete_existing:
     required: false
     default: false
+    type: boolean
+  release:
+    description: Whether to create a GitHub Release as well as a tag
+    required: false
+    default: true
+    type: boolean
+  release_description:
+    description: The description for the GitHub Release if creating one
+    required: false
+    default: ''
+    type: string
+  release_auto_notes:
+    description: If true, the GitHub release description is automatically generated
+    required: false
+    default: true
+    type: boolean
+  # Only set this to true in action-ci.yml
+  # We need this to avoid race conditions, i.e. if we dispatched this action and autotag from action-ci, autotag would likely finish first.
+  dispatch_gha_autotag:
+    description: If true, the auto-tag.yml workflow will be dispatched after tagging is successful
+    required: false
+    default: false
+    type: boolean
 
 runs:
   using: composite
   steps:
 
     - name: Validate inputs
-      shell: bash
       env:
+        LATEST_LOCAL_SHA: ${{ inputs.latest_local_sha }}
+        SKIP_GAUGE_RELEASE: ${{ inputs.skip_gauge_release }}
         TAG: ${{ inputs.tag }}
+        DELETE_EXISTING: ${{ inputs.delete_existing }}
+      shell: bash
       run: |
-        git check-ref-format "tags/$TAG" > /dev/null
-        if [[ $? != "0" ]]; then
-          echo "Invalid tag"
+        VALID=1
+        # If we're not gauging release, there MUST be a tag.
+        if [[ $SKIP_GAUGE_RELEASE == 'true' && $TAG == '' ]]; then
+          echo "Must provide a tag when skip_gauge_release is true"
+          VALID=0
+        fi
+        # If there's a tag, it must be a valid git ref for this repo
+        if [[ $SKIP_GAUGE_RELEASE != 'true' && $TAG != '' ]]; then
+          git check-ref-format "tags/$TAG" > /dev/null
+          if [[ $? != "0" ]]; then
+            echo "Invalid tag"
+            VALID=0
+          fi
+        fi
+        # gauge release requires the latest local sha
+        if [[ $SKIP_GAUGE_RELEASE != 'true' && $LATEST_LOCAL_SHA == '' ]]; then
+          echo "Must include latest_local_sha when skip_gauge_release is false"
+          VALID=0
+        fi
+        # Can't delete existing tag if using gauge release
+        if [[ $SKIP_GAUGE_RELEASE != 'true' && $DELETE_EXISTING == 'true' ]]; then
+          echo "Cannot set delete_existing to true when skip_gauge_release is false"
+          VALID=0
+        fi
+        if [[ $VALID != 1 ]]; then
           exit 1
         fi
 
-    - name: Delete existing release if one exists
-      if: ${{ inputs.release == 'true' && inputs.delete_existing == 'true' }}
-      shell: bash
+    - name: Check unreleased changes
+      id: gauge-release
       env:
-        TAG: ${{ inputs.tag }}
         GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_REF_NAME: ${{ github.ref_name }}
+        GITHUB_SHA: ${{ github.sha }}
+        LATEST_LOCAL_SHA: ${{ inputs.latest_local_sha }}
+        SKIP_GAUGE_RELEASE: ${{ inputs.skip_gauge_release }}
+      shell: bash
+      run: |
+        DO_RELEASE=1
+
+        if [[ $SKIP_GAUGE_RELEASE == 'true' ]]; then
+          echo "skipping gauge release"
+          echo "do_release output is $DO_RELEASE"
+          echo "do_release=$DO_RELEASE" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        # Double check that LATEST_LOCAL_SHA matches GITHUB_SHA
+        echo "LATEST_LOCAL_SHA is $LATEST_LOCAL_SHA"
+        echo "GITHUB_SHA is $GITHUB_SHA"
+        if [[ $LATEST_LOCAL_SHA != $GITHUB_SHA ]]; then
+          echo "Not patch releasing because GITHUB_SHA is not equal to latest local sha"
+          DO_RELEASE=0
+        fi
+
+        # Must be on a minor branch to do a patch release
+        if [[ $DO_RELEASE == "1" ]]; then
+          if ! [[ $GITHUB_REF_NAME =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "Not patch releasing because not on a minor branch"
+            DO_RELEASE=0
+          fi
+        fi
+
+        # Validate that this commit is that latest commit for the branch using GitHub API
+        # We need to check this in case re-rerunning an old job and there have been new commits since
+        if [[ $DO_RELEASE == "1" ]]; then
+          # https://docs.github.com/en/rest/commits/commits?apiVersion=2022-11-28
+          RESP_CODE=$(curl -w %{http_code} -s -o __response.json \
+          -X GET "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits?sha=${GITHUB_REF_NAME}&per_page=1" \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${{ github.token }}" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          )
+          if [[ $RESP_CODE != "200" ]]; then
+            echo "Unable to read list of commits - HTTP response code was $RESP_CODE"
+            exit 1
+          fi
+          LATEST_REMOTE_SHA=$(jq -r '.[0].sha' __response.json)
+          echo "LATEST_REMOTE_SHA is $LATEST_REMOTE_SHA"
+          echo "LATEST_LOCAL_SHA is $LATEST_LOCAL_SHA"
+          if [[ $LATEST_REMOTE_SHA != $LATEST_LOCAL_SHA ]]; then
+            echo "Not patch releasing because latest remote sha is not equal to latest local sha"
+            DO_RELEASE=0
+          fi
+          # Also validate the sha matches GITHUB_SHA, which is what gha-tag-release will use
+          if [[ $GITHUB_SHA != $LATEST_LOCAL_SHA ]]; then
+            echo "Not patch releasing because GITHUB_SHA is not equal to latest local sha"
+            DO_RELEASE=0
+          fi
+        fi
+
+        # Check is there is an existing tag on the branch using GitHub API
+        # Note cannot use local `git tag` because actions/checkout by default will not checkout tags
+        # and you need to checkout full history in order to get them
+        LATEST_TAG=""
+        NEXT_TAG=""
+        if [[ $DO_RELEASE == "1" ]]; then
+          # https://docs.github.com/en/rest/git/refs?apiVersion=2022-11-28#list-matching-references
+          RESP_CODE=$(curl -w %{http_code} -s -o __response.json \
+          -X GET https://api.github.com/repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${GITHUB_REF_NAME} \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${{ github.token }}" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          )
+          if [[ $RESP_CODE != "200" ]]; then
+            echo "Unable to read list of tags - HTTP response code was $RESP_CODE"
+            exit 1
+          fi
+          # Get the latest tag
+          LATEST_TAG=$(jq -r '.[].ref' __response.json | grep -Po '(?<=^refs\/tags\/)[0-9]+\.[0-9]+\.[0-9]+$' | sort -V -r | head -n 1) || true
+          echo "LATEST_TAG is $LATEST_TAG"
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          if ! [[ $LATEST_TAG =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+            echo "Not patch releasing because cannot find a matching semver tag on the branch"
+            DO_RELEASE=0
+          else
+            MAJOR=${BASH_REMATCH[1]}
+            MINOR=${BASH_REMATCH[2]}
+            PATCH=${BASH_REMATCH[3]}
+            NEXT_TAG="$MAJOR.$MINOR.$((PATCH+1))"
+            echo "NEXT_TAG is $NEXT_TAG"
+            echo "next_tag=$NEXT_TAG" >> $GITHUB_OUTPUT
+          fi
+        fi
+
+        # Check if there is anything relevant commits to release using GitHub API using the tripe-dot compoare endpoint
+        # which will show things that are in the next-patch branch that are not in the latest tag
+        # Note: unlike CLI, the API endpoint results include all merged pull-requests, not commits
+        # Pull-requests prefixed with MNT or DOC will not be considered relevant for releasing
+        if [[ $DO_RELEASE == "1" ]]; then
+          # Check on github release notes api if there's anything worth releasing
+          # Compare commits between current sha with latest tag to see if there is anything worth releasing
+          # https://docs.github.com/en/rest/commits/commits?apiVersion=2022-11-28#compare-two-commits
+          RESP_CODE=$(curl -w %{http_code} -s -o __response.json \
+          -X GET https://api.github.com/repos/$GITHUB_REPOSITORY/compare/$LATEST_TAG...$GITHUB_SHA?per_page=100 \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${{ github.token }}" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          )
+          if [[ $RESP_CODE != "200" ]]; then
+            echo "Unable to fetch compare two commits - HTTP response code was $RESP_CODE"
+            exit 1
+          fi
+          # Get commits for text parsing
+          jq -r '.commits[].commit.message' __response.json > __commits.json
+          # Parse comits one line at a time
+          HAS_THINGS_TO_RELEASE=0
+          while IFS="" read -r line || [[ -n $line ]]; do
+            # Remove any leading bullet points
+            line="${line#\* }"
+            line="${line#\-}"
+            line="${line# }"
+            if ! [[ "$line" =~ ^(Merge|MNT|DOC) ]] && ! [[ $line =~ ^[[:space:]]*$ ]]; then
+              HAS_THINGS_TO_RELEASE=1
+              break
+            fi
+          done < __commits.json
+          if [[ $HAS_THINGS_TO_RELEASE == "0" ]]; then
+            echo "Not patch releasing because there is nothing relevant to release"
+            DO_RELEASE=0
+          fi
+        fi
+
+        # Check again, this time using the double-dot syntax which will show the raw diff between the latest tag
+        # and the next-patch branch
+        # This isn't available via the github api, so screen scrape this instead. Screen scraping isn't
+        # great because it's brittle, however if this fails then all that happens is we tag a release that
+        # has no actual changes, which isn't the end of the world.
+        # Here we are only detecting if there are no actual changes to release, which can happen in a couple of scenarios:
+        # a) A change is made and tagged, and then backported to an older branch and then merged-up
+        # b) A change made in a previous major that we don't want to keep in current major, so
+        #    it's reverted during the merge-up
+        if [[ $DO_RELEASE == "1" ]]; then
+          RESP_CODE=$(curl -w %{http_code} -s -o __compare.html \
+          -X GET https://github.com/$GITHUB_REPOSITORY/compare/$LATEST_TAG..$GITHUB_SHA
+          )
+          if [[ $RESP_CODE != "200" ]]; then
+            echo "Unable to fetch compare html - HTTP response code was $RESP_CODE"
+            exit 1
+          fi
+          PARSED=$(php -r '
+            $s = file_get_contents("__compare.html");
+            $s = strip_tags($s);
+            $s = str_replace("[\r\n]", " ", $s);
+            $s = preg_replace("# {2,}#", " ", $s);
+            echo $s;
+          ')
+          # `|| true` needs to be suffixed otherwise an error code of 1 will be omitted when there is no grep match
+          IDENTICAL=$(echo $PARSED | grep "$LATEST_TAG and $GITHUB_SHA are identical") || true
+          if [[ $IDENTICAL != "" ]]; then
+            echo "Not patch releasing because there are no actual changes to release"
+            DO_RELEASE=0
+          fi
+        fi
+
+        echo "do_release output is $DO_RELEASE"
+        echo "do_release=$DO_RELEASE" >> $GITHUB_OUTPUT
+
+    - name: Get clean tag name
+      id: tag-name
+      if: ${{ steps.gauge-release.outputs.do_release == '1' }}
+      env:
+        DISCOVERED_TAG: ${{ steps.gauge-release.outputs.next_tag }}
+        INPUT_TAG: ${{ inputs.tag }}
+      shell: bash
+      run: |
+        # Provide an output with the tag to use
+        TAG="$DISCOVERED_TAG"
+        if [[ $INPUT_TAG != '' ]]; then
+          TAG="$INPUT_TAG"
+        fi
+        echo "tag output is $TAG"
+        echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+    - name: Delete existing release if one exists
+      if: ${{ steps.gauge-release.outputs.do_release == '1' && inputs.release == 'true' && inputs.delete_existing == 'true' }}
+      env:
+        TAG: ${{ steps.tag-name.outputs.tag }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      shell: bash
       run: |
         # Get id for an existing release matching $TAG
         # https://docs.github.com/en/rest/releases/releases#get-a-release-by-tag-name
@@ -76,11 +309,11 @@ runs:
         fi
 
     - name: Delete existing tag if one exists
-      if: ${{ inputs.delete_existing == 'true' }}
-      shell: bash
+      if: ${{ steps.gauge-release.outputs.do_release == '1' && inputs.delete_existing == 'true' }}
       env:
-        TAG: ${{ inputs.tag }}
+        TAG: ${{ steps.tag-name.outputs.tag }}
         GITHUB_REPOSITORY: ${{ github.repository }}
+      shell: bash
       run: |
         # Check if tag currently exists
         # Note: not using https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/tags/<tag>
@@ -121,12 +354,12 @@ runs:
 
     - name: Create tag
       # Creating a release will also create a tag, so only create explicitly create tag if not creating release
-      if: ${{ inputs.release == 'false' }}
-      shell: bash
+      if: ${{ steps.gauge-release.outputs.do_release == '1' && inputs.release == 'false' }}
       env:
-        TAG: ${{ inputs.tag }}
+        TAG: ${{ steps.tag-name.outputs.tag }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         GITHUB_SHA: ${{ github.sha }}
+      shell: bash
       run: |
         # Create new tag via GitHub API
         # https://docs.github.com/en/rest/reference/git#create-a-reference
@@ -149,13 +382,13 @@ runs:
         echo "New tag $TAG created for sha ${{ github.sha }}"
 
     - name: Create release
-      if: ${{ inputs.release == 'true' }}
-      shell: bash
+      if: ${{ steps.gauge-release.outputs.do_release == '1' && inputs.release == 'true' }}
       env:
-        TAG: ${{ inputs.tag }}
+        TAG: ${{ steps.tag-name.outputs.tag }}
         RELEASE_DESCRIPTION: ${{ inputs.release_description }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         GITHUB_SHA: ${{ github.sha }}
+      shell: bash
       run: |
         # Work out if release should be marked as the latest
         # Only do the for stable semver tags
@@ -218,10 +451,38 @@ runs:
         fi
         echo "New release $TAG created"
 
-    - name: Delete temporary files
+    - name: Dispatch auto tag
+      if: ${{ steps.gauge-release.outputs.do_release == '1' && inputs.dispatch_gha_autotag == 'true' }}
+      env:
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        BRANCH: ${{ github.ref_name }}
       shell: bash
+      run: |
+        # https://docs.github.com/en/rest/actions/workflows?apiVersion=2022-11-28#create-a-workflow-dispatch-event
+        RESP_CODE=$(curl -w %{http_code} -s -L -o __response.json \
+          -X POST \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${{ github.token }}" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/auto-tag.yml/dispatches \
+          -d "{\"ref\":\"$BRANCH\"}"
+        )
+        if [[ $RESP_CODE != "204" ]]; then
+          echo "Failed to dispatch workflow - HTTP response code was $RESP_CODE"
+          cat __response.json
+          exit 1
+        fi
+
+    - name: Delete temporary files
       if: always()
+      shell: bash
       run: |
         if [[ -f __response.json ]]; then
           rm __response.json
+        fi
+        if [[ -f __commits.json ]]; then
+          rm __commits.json
+        fi
+        if [[ -f __compare.html ]]; then
+          rm __compare.html
         fi
